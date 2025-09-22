@@ -29,6 +29,7 @@ export default function ProfileTab() {
     name?: string;
     email?: string;
     documento?: string;
+    phone?: string;
     avatar_url?: string;
   } | null>(null);
 
@@ -38,6 +39,7 @@ export default function ProfileTab() {
 
   const [newName, setNewName] = useState("");
   const [newDoc, setNewDoc] = useState("");
+  const [newPhone, setNewPhone] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -53,7 +55,7 @@ export default function ProfileTab() {
 
       const { data, error } = await supabase
         .from("profiles")
-        .select("name, email, documento, avatar_url")
+        .select("name, email, documento, phone, avatar_url") // 👈 incluye telefono
         .eq("id", user.id)
         .single();
 
@@ -63,12 +65,14 @@ export default function ProfileTab() {
         setProfile(data);
         setNewName(data?.name ?? "");
         setNewDoc(data?.documento ?? "");
+        setNewPhone(data?.phone ?? ""); // 👈 corregido
         setAvatarUrl(data?.avatar_url ?? null);
       }
     };
 
     fetchProfile();
   }, [user]);
+
 
   const handleSaveProfile = async () => {
     if (!user) return;
@@ -82,7 +86,7 @@ export default function ProfileTab() {
 
       Alert.alert("Éxito", "Perfil actualizado correctamente");
       setEditModal(false);
-      setProfile({ ...profile, name: newName, documento: newDoc });
+      setProfile({ ...profile, name: newName, documento: newDoc, phone: newPhone }); // 👈 corregido
     } catch (err: any) {
       Alert.alert("Error", err.message);
     }
@@ -123,67 +127,67 @@ export default function ProfileTab() {
   };
 
   const handleChangeProfilePic = async () => {
-  if (!user) return;
+    if (!user) return;
 
-  const { status } = await ImagePicker.requestCameraPermissionsAsync();
-  if (status !== "granted") {
-    Alert.alert("Permiso requerido", "Necesitas permitir acceso a la cámara");
-    return;
-  }
-
-  const result = await ImagePicker.launchCameraAsync({
-    allowsEditing: true,
-    aspect: [1, 1],
-    quality: 0.8,
-    base64: true, // 👈 importante
-  });
-
-  if (result.canceled) return;
-
-  const fileName = `avatars/${user.id}-${Date.now()}.jpg`;
-
-
-  try {
-    // tomar base64 directo desde ImagePicker
-    const base64 = result.assets[0].base64;
-
-    if (!base64) throw new Error("No se pudo obtener la imagen en base64");
-
-    // convertir base64 a Uint8Array
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permiso requerido", "Necesitas permitir acceso a la cámara");
+      return;
     }
 
-    // subir a Supabase
-    const { error: uploadError } = await supabase.storage
-      .from("profile_pic")
-      .upload(fileName, bytes, {
-        contentType: "image/jpeg",
-        upsert: true,
-      });
+    const result = await ImagePicker.launchCameraAsync({
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+      base64: true, // 👈 importante
+    });
 
-    if (uploadError) throw uploadError;
+    if (result.canceled) return;
 
-    // obtener URL pública
-    const { data } = supabase.storage.from("profile_pic").getPublicUrl(fileName);
-    const publicUrl = data.publicUrl;
+    const fileName = `avatars/${user.id}-${Date.now()}.jpg`;
 
-    // guardar en tabla profiles
-    const { error: updateError } = await supabase
-      .from("profiles")
-      .update({ avatar_url: publicUrl })
-      .eq("id", user.id);
 
-    if (updateError) throw updateError;
+    try {
+      // tomar base64 directo desde ImagePicker
+      const base64 = result.assets[0].base64;
 
-    setAvatarUrl(publicUrl);
-    Alert.alert("Éxito", "Foto de perfil actualizada");
-  } catch (err: any) {
-    Alert.alert("Error", err.message);
-  }
-};
+      if (!base64) throw new Error("No se pudo obtener la imagen en base64");
+
+      // convertir base64 a Uint8Array
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+
+      // subir a Supabase
+      const { error: uploadError } = await supabase.storage
+        .from("profile_pic")
+        .upload(fileName, bytes, {
+          contentType: "image/jpeg",
+          upsert: true,
+        });
+
+      if (uploadError) throw uploadError;
+
+      // obtener URL pública
+      const { data } = supabase.storage.from("profile_pic").getPublicUrl(fileName);
+      const publicUrl = data.publicUrl;
+
+      // guardar en tabla profiles
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({ avatar_url: publicUrl })
+        .eq("id", user.id);
+
+      if (updateError) throw updateError;
+
+      setAvatarUrl(publicUrl);
+      Alert.alert("Éxito", "Foto de perfil actualizada");
+    } catch (err: any) {
+      Alert.alert("Error", err.message);
+    }
+  };
 
   return (
     <ImageBackground
@@ -363,6 +367,14 @@ export default function ProfileTab() {
               onChangeText={setNewDoc}
               style={styles.input}
             />
+            <TextInput
+              placeholder="Número de teléfono"
+              value={newPhone}
+              onChangeText={setNewPhone}
+              style={styles.input}
+              keyboardType="phone-pad"
+            />
+
             <TouchableOpacity style={styles.button} onPress={handleSaveProfile}>
               <Text style={{ color: "#fff" }}>Guardar</Text>
             </TouchableOpacity>
@@ -372,6 +384,7 @@ export default function ProfileTab() {
           </View>
         </View>
       </Modal>
+
 
       {/* Modal Cambiar Correo */}
       <Modal visible={emailModal} transparent animationType="slide">
@@ -550,4 +563,3 @@ const styles = StyleSheet.create({
   flexInput: { flex: 1, marginBottom: 0 },
   iconContainer: { paddingHorizontal: 10 },
 });
- 

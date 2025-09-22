@@ -62,51 +62,48 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   // 🔹 REGISTER
   const register = async (
-    email: string,
-    password: string,
-    nombre: string,
-    documento: string,
-    phone: string,
-    gender: string,
-    birthDate: string
-  ) => {
-    setIsLoading(true);
+  email: string,
+  password: string,
+  nombre: string,
+  documento: string,
+  phone: string,
+  gender: string,
+  birthDate: string
+) => {
+  setIsLoading(true);
 
-    const { data, error } = await supabase.auth.signUp({ email, password });
+  const { data, error } = await supabase.auth.signUp({ email, password });
 
-    if (error) {
-      console.error("Error al registrar:", error);
-      setIsLoading(false);
-      throw error;
-    }
-
-    const userId = data.user?.id;
-    const emailFinal = data.user?.email;
-
-    if (userId && emailFinal) {
-      const { error: profileError } = await supabase.from("profiles").insert([
-        {
-          id: userId,
-          name: nombre,
-          documento,
-          email: emailFinal,
-          phone,
-          gender,
-          birth_date: birthDate, // 👈 se guarda como string YYYY-MM-DD
-        },
-      ]);
-
-      if (profileError) {
-        console.error("🔥 Error al guardar en profiles:", profileError);
-        // no lanzamos error porque el usuario sí quedó creado en Auth
-      }
-
-      setUser(data.user);
-    }
-
+  if (error) {
+    console.error("Error al registrar:", error);
     setIsLoading(false);
-    return data;
-  };
+    throw error;
+  }
+
+  const userId = data.user?.id;
+  const emailFinal = data.user?.email;
+
+  if (userId && emailFinal) {
+    const { error: profileError } = await supabase.from("profiles").upsert({
+      id: userId,         // 👈 importante: coincide con auth.uid
+      email: emailFinal,
+      name: nombre,
+      documento: documento,
+      phone: phone,
+      gender: gender,
+      birth_date: birthDate || null, // 👈 null si no viene
+    });
+
+    if (profileError) {
+      console.error("🔥 Error al guardar en profiles:", profileError);
+    }
+
+    setUser(data.user);
+  }
+
+  setIsLoading(false);
+  return data;
+};
 
   // 🔹 RESET PASSWORD
   const resetPassword = async (email: string) => {

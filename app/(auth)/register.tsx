@@ -116,6 +116,7 @@ export default function Register() {
                 style={styles.textinput}
                 keyboardType="number-pad"
                 value={documento}
+                autoComplete="off"
                 onChangeText={setDocumento}
               />
 
