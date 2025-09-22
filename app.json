@@ -4,7 +4,7 @@
     "slug": "betapp",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/black_icon.png",
     "scheme": "betapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
