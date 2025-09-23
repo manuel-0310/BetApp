@@ -5,6 +5,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useContext, useEffect, useState } from "react";
 import {
+  ActionSheetIOS,
   Alert,
   Image,
   ImageBackground,
@@ -55,7 +56,7 @@ export default function ProfileTab() {
 
       const { data, error } = await supabase
         .from("profiles")
-        .select("name, email, documento, phone, avatar_url") // 👈 incluye telefono
+        .select("name, email, documento, phone, avatar_url")
         .eq("id", user.id)
         .single();
 
@@ -65,7 +66,7 @@ export default function ProfileTab() {
         setProfile(data);
         setNewName(data?.name ?? "");
         setNewDoc(data?.documento ?? "");
-        setNewPhone(data?.phone ?? ""); // 👈 corregido
+        setNewPhone(data?.phone ?? "");
         setAvatarUrl(data?.avatar_url ?? null);
       }
     };
@@ -73,20 +74,19 @@ export default function ProfileTab() {
     fetchProfile();
   }, [user]);
 
-
   const handleSaveProfile = async () => {
     if (!user) return;
     try {
       const { error } = await supabase
         .from("profiles")
-        .update({ name: newName, documento: newDoc })
+        .update({ name: newName, documento: newDoc, phone: newPhone })
         .eq("id", user.id);
 
       if (error) throw error;
 
       Alert.alert("Éxito", "Perfil actualizado correctamente");
       setEditModal(false);
-      setProfile({ ...profile, name: newName, documento: newDoc, phone: newPhone }); // 👈 corregido
+      setProfile({ ...profile, name: newName, documento: newDoc, phone: newPhone });
     } catch (err: any) {
       Alert.alert("Error", err.message);
     }
@@ -126,9 +126,34 @@ export default function ProfileTab() {
     }
   };
 
+  // ---------- FOTO DE PERFIL ----------
   const handleChangeProfilePic = async () => {
     if (!user) return;
 
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options: ["Cancelar", "Tomar foto", "Elegir de la galería"],
+          cancelButtonIndex: 0,
+        },
+        async (buttonIndex) => {
+          if (buttonIndex === 1) {
+            await pickFromCamera();
+          } else if (buttonIndex === 2) {
+            await pickFromGallery();
+          }
+        }
+      );
+    } else {
+      Alert.alert("Seleccionar foto", "¿De dónde quieres obtener la foto?", [
+        { text: "Cancelar", style: "cancel" },
+        { text: "Cámara", onPress: () => pickFromCamera() },
+        { text: "Galería", onPress: () => pickFromGallery() },
+      ]);
+    }
+  };
+
+  const pickFromCamera = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== "granted") {
       Alert.alert("Permiso requerido", "Necesitas permitir acceso a la cámara");
@@ -139,28 +164,40 @@ export default function ProfileTab() {
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.8,
-      base64: true, // 👈 importante
+      base64: true,
     });
 
-    if (result.canceled) return;
+    if (!result.canceled) {
+      await uploadImage(result.assets[0].base64!);
+    }
+  };
 
-    const fileName = `avatars/${user.id}-${Date.now()}.jpg`;
+  const pickFromGallery = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") {
+      Alert.alert("Permiso requerido", "Necesitas permitir acceso a la galería");
+      return;
+    }
 
+    const result = await ImagePicker.launchImageLibraryAsync({
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+      base64: true,
+    });
 
+    if (!result.canceled) {
+      await uploadImage(result.assets[0].base64!);
+    }
+  };
+
+  const uploadImage = async (base64: string) => {
     try {
-      // tomar base64 directo desde ImagePicker
-      const base64 = result.assets[0].base64;
-
-      if (!base64) throw new Error("No se pudo obtener la imagen en base64");
-
-      // convertir base64 a Uint8Array
+      const fileName = `avatars/${user.id}-${Date.now()}.jpg`;
       const binary = atob(base64);
       const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
-      // subir a Supabase
       const { error: uploadError } = await supabase.storage
         .from("profile_pic")
         .upload(fileName, bytes, {
@@ -170,11 +207,9 @@ export default function ProfileTab() {
 
       if (uploadError) throw uploadError;
 
-      // obtener URL pública
       const { data } = supabase.storage.from("profile_pic").getPublicUrl(fileName);
       const publicUrl = data.publicUrl;
 
-      // guardar en tabla profiles
       const { error: updateError } = await supabase
         .from("profiles")
         .update({ avatar_url: publicUrl })
@@ -188,6 +223,7 @@ export default function ProfileTab() {
       Alert.alert("Error", err.message);
     }
   };
+  // ------------------------------------
 
   return (
     <ImageBackground
@@ -384,7 +420,6 @@ export default function ProfileTab() {
           </View>
         </View>
       </Modal>
-
 
       {/* Modal Cambiar Correo */}
       <Modal visible={emailModal} transparent animationType="slide">
