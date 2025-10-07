@@ -1,5 +1,11 @@
+// app/main/(tabs)/chats/[chatId].tsx
 import { useAuth } from "@/contexts/AuthContext";
-import { getMessages, sendImageMessage, sendMessage, uploadChatImage } from "@/utils/chatService";
+import {
+  getMessages,
+  sendImageMessage,
+  sendMessage,
+  uploadChatImage,
+} from "@/utils/chatService";
 import { supabase } from "@/utils/supabase";
 import * as ImagePicker from "expo-image-picker";
 import { useLocalSearchParams } from "expo-router";
@@ -9,7 +15,9 @@ import {
   FlatList,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
+  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -20,13 +28,16 @@ import {
 export default function ChatRoom() {
   const { chatId } = useLocalSearchParams<{ chatId: string }>();
   const { user } = useAuth();
+
   const [messages, setMessages] = useState<any[]>([]);
   const [newMsg, setNewMsg] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null); // preview antes de enviar
+  const [selectedImage, setSelectedImage] = useState<string | null>(null); // ver imagen en modal
   const flatListRef = useRef<FlatList>(null);
 
   // ========================
-  // 🔹 CARGAR MENSAJES Y ESCUCHAR EN TIEMPO REAL
+  // 🔹 Cargar mensajes + Realtime
   // ========================
   useEffect(() => {
     if (!chatId) return;
@@ -37,10 +48,24 @@ export default function ChatRoom() {
       .channel(`chat-messages-${chatId}`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "messages", filter: `chat_id=eq.${chatId}` },
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+          filter: `chat_id=eq.${chatId}`,
+        },
         (payload) => {
-          setMessages((prev) => [...prev, payload.new]);
-          setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+          setMessages((prev) => {
+            // quita cualquier mensaje temporal local
+            const noTemp = prev.filter((m) => !m.__local);
+            // evita duplicados si ya está
+            if (noTemp.some((m) => m.id === payload.new.id)) return noTemp;
+            return [...noTemp, payload.new];
+          });
+          setTimeout(
+            () => flatListRef.current?.scrollToEnd({ animated: true }),
+            80
+          );
         }
       )
       .subscribe();
@@ -51,7 +76,7 @@ export default function ChatRoom() {
   }, [chatId]);
 
   // ========================
-  // 🔹 ENVIAR TEXTO
+  // 🔹 Enviar texto
   // ========================
   const handleSend = async () => {
     if (!newMsg.trim() || !user) return;
@@ -72,66 +97,86 @@ export default function ChatRoom() {
   };
 
   // ========================
-  // 🔹 ENVIAR IMAGEN
+  // 🔹 Selector de imagen
   // ========================
-  const pickImageAndSend = async () => {
-  if (!user || !chatId) return;
+  const pickImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== "granted") {
+      alert("Permiso denegado para acceder a la galería");
+      return;
+    }
 
-  const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-  if (status !== "granted") {
-    alert("Permiso denegado para acceder a la galería");
-    return;
-  }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.8,
+      base64: true,
+    });
 
-  const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: ImagePicker.MediaTypeOptions.Images,
-    allowsEditing: true,
-    quality: 0.8,
-    base64: true, // 👈 importante
-  });
+    if (result.canceled) return;
+    const uri = result.assets?.[0]?.uri;
+    if (!uri) return;
 
-  if (result.canceled) return;
-  const base64 = result.assets?.[0]?.base64;
-  const uri = result.assets?.[0]?.uri;
-  if (!base64 || !uri) return;
+    setPreviewImage(uri); // 👈 mostramos preview antes de enviar
+  };
 
-  try {
+  // ========================
+  // 🔹 Confirmar envío de imagen
+  // ========================
+  const confirmSendImage = async () => {
+    if (!previewImage || !user || !chatId) return;
     setUploading(true);
 
-    // Mostrar temporalmente la imagen local
-    const temp = {
-      id: `temp-${Date.now()}`,
-      chat_id: chatId,
-      user_id: user.id,
-      type: "image",
-      media_url: uri,
-      created_at: new Date().toISOString(),
-      __local: true,
-    };
-    setMessages((prev) => [...prev, temp]);
+    try {
+      // 1) Mensaje temporal local (optimista)
+      const temp = {
+        id: `temp-${Date.now()}`,
+        chat_id: chatId,
+        user_id: user.id,
+        type: "image",
+        media_url: previewImage,
+        created_at: new Date().toISOString(),
+        __local: true,
+      };
+      setMessages((prev) => [...prev, temp]);
 
-    // Subir a bucket y obtener URL pública
-    const publicUrl = await uploadChatImage(chatId, user.id, base64);
+      // 2) Subir a storage y enviar mensaje real
+      const base64Data = await getBase64FromUri(previewImage);
+      const publicUrl = await uploadChatImage(chatId, user.id, base64Data);
+      await sendImageMessage(chatId, user.id, publicUrl);
 
-    // Guardar mensaje en la base de datos
-    await sendImageMessage(chatId, user.id, publicUrl);
+      // 👇 Ya NO borramos el temporal aquí:
+      // el callback de realtime quitará los __local y añadirá el definitivo.
+      setPreviewImage(null);
+    } catch (err) {
+      console.error("❌ Error enviando imagen:", err);
+      alert("Error al enviar la imagen");
+      // Si falla, limpiamos el temporal
+      setMessages((prev) => prev.filter((m) => !m.__local));
+    } finally {
+      setUploading(false);
+    }
+  };
 
-    // Quitar el mensaje temporal
-    setMessages((prev) => prev.filter((m) => !m.__local));
-  } catch (err) {
-    console.error("❌ Error enviando imagen:", err);
-    alert("No se pudo enviar la imagen");
-  } finally {
-    setUploading(false);
-  }
-};
+  // 🔸 Helper: convertir URI local a base64
+  const getBase64FromUri = async (uri: string) => {
+    const response = await fetch(uri);
+    const blob = await response.blob();
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve((reader.result as string).split(",")[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
 
   // ========================
-  // 🔹 RENDER DE MENSAJES
+  // 🔹 Render de mensajes
   // ========================
   const renderItem = ({ item }: any) => {
     const isMine = item.user_id === user?.id;
     const isImage = item.type === "image";
+
     return (
       <View
         style={[
@@ -141,7 +186,9 @@ export default function ChatRoom() {
       >
         {!isMine && (
           <Image
-            source={{ uri: "https://cdn-icons-png.flaticon.com/512/149/149071.png" }}
+            source={{
+              uri: "https://cdn-icons-png.flaticon.com/512/149/149071.png",
+            }}
             style={styles.avatar}
           />
         )}
@@ -156,7 +203,9 @@ export default function ChatRoom() {
           ]}
         >
           {isImage ? (
-            <Image source={{ uri: item.media_url }} style={styles.image} />
+            <TouchableOpacity onPress={() => setSelectedImage(item.media_url)}>
+              <Image source={{ uri: item.media_url }} style={styles.image} />
+            </TouchableOpacity>
           ) : (
             <Text style={styles.messageText}>{item.content}</Text>
           )}
@@ -172,7 +221,7 @@ export default function ChatRoom() {
   };
 
   // ========================
-  // 🔹 UI PRINCIPAL
+  // 🔹 Interfaz principal
   // ========================
   return (
     <KeyboardAvoidingView
@@ -185,11 +234,18 @@ export default function ChatRoom() {
         renderItem={renderItem}
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={styles.chatBody}
-        onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+        onContentSizeChange={() =>
+          flatListRef.current?.scrollToEnd({ animated: true })
+        }
       />
 
+      {/* 📎 Barra inferior */}
       <View style={styles.inputContainer}>
-        <TouchableOpacity onPress={pickImageAndSend} style={styles.attachBtn} disabled={uploading}>
+        <TouchableOpacity
+          onPress={pickImage}
+          style={styles.attachBtn}
+          disabled={uploading}
+        >
           <Text style={styles.attachText}>📎</Text>
         </TouchableOpacity>
 
@@ -200,7 +256,11 @@ export default function ChatRoom() {
           style={styles.input}
         />
 
-        <TouchableOpacity onPress={handleSend} style={styles.sendButton} disabled={uploading}>
+        <TouchableOpacity
+          onPress={handleSend}
+          style={styles.sendButton}
+          disabled={uploading}
+        >
           {uploading ? (
             <ActivityIndicator color="#fff" />
           ) : (
@@ -208,17 +268,62 @@ export default function ChatRoom() {
           )}
         </TouchableOpacity>
       </View>
+
+      {/* 🔍 Preview de imagen antes de enviar */}
+      {previewImage && (
+        <Modal visible transparent animationType="fade">
+          <Pressable style={styles.modalContainer} onPress={() => setPreviewImage(null)}>
+            <Image source={{ uri: previewImage }} style={styles.fullImage} />
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalBtn, { backgroundColor: "#E63946" }]}
+                onPress={() => setPreviewImage(null)}
+              >
+                <Text style={styles.modalBtnTxt}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, { backgroundColor: "#128C7E" }]}
+                onPress={confirmSendImage}
+              >
+                <Text style={styles.modalBtnTxt}>
+                  {uploading ? "Enviando..." : "Enviar"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Modal>
+      )}
+
+      {/* 🖼️ Modal imagen completa */}
+      {selectedImage && (
+        <Modal visible transparent animationType="fade">
+          <View style={styles.modalContainer}>
+            <Image source={{ uri: selectedImage }} style={styles.fullImage} />
+            <TouchableOpacity
+              style={styles.closeBtn}
+              onPress={() => setSelectedImage(null)}
+              hitSlop={{ top: 16, right: 16, bottom: 16, left: 16 }} // área extra
+            >
+              <Text style={styles.closeTxt}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        </Modal>
+      )}
     </KeyboardAvoidingView>
   );
 }
 
 // ========================
-// 🔹 ESTILOS
+// 🔹 Estilos
 // ========================
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#E5DDD5" },
   chatBody: { padding: 10, paddingBottom: 20 },
-  messageContainer: { flexDirection: "row", marginVertical: 5, alignItems: "flex-end" },
+  messageContainer: {
+    flexDirection: "row",
+    marginVertical: 5,
+    alignItems: "flex-end",
+  },
   avatar: { width: 30, height: 30, borderRadius: 15, marginRight: 8 },
   bubble: {
     maxWidth: "75%",
@@ -268,4 +373,43 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   sendButtonText: { color: "#fff", fontSize: 18 },
+
+  // 🔸 Modal
+  modalContainer: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.9)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  fullImage: {
+    width: "90%",
+    height: "70%",
+    resizeMode: "contain",
+    borderRadius: 10,
+  },
+  modalActions: {
+    flexDirection: "row",
+    marginTop: 20,
+    gap: 15,
+  },
+  modalBtn: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  modalBtnTxt: { color: "#fff", fontWeight: "700", fontSize: 16 },
+
+  // ❌ Botón X grande y táctil
+  closeBtn: {
+    position: "absolute",
+    top: 36,
+    right: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.6)",
+  },
+  closeTxt: { color: "#fff", fontWeight: "800", fontSize: 22 },
 });

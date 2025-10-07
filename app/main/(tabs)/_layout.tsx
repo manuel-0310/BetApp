@@ -25,7 +25,7 @@ export default function TabsLayout() {
             <Tabs.Screen
                 name="opc1"
                 options={{
-                    title: 'opc1',
+                    title: 'Apostar',
                     tabBarIcon: ({ color, size }) => (
                         <Ionicons name="search" size={size} color={color} />
                     ),
@@ -34,7 +34,7 @@ export default function TabsLayout() {
             <Tabs.Screen
                 name="opc2"
                 options={{
-                    title: 'opc2',
+                    title: 'Billetera',
                     tabBarIcon: ({ color, size }) => (
                         <Ionicons name="search" size={size} color={color} />
                     ),
