@@ -41,9 +41,9 @@ export default function TabsLayout() {
                 }}
             />
             <Tabs.Screen
-                name="opc3"
+                name="chats"
                 options={{
-                    title: 'opc3',
+                    title: 'Chats',
                     tabBarIcon: ({ color, size }) => (
                         <Ionicons name="search" size={size} color={color} />
                     ),

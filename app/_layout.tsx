@@ -1,8 +1,10 @@
+import { ChatProvider } from "@/contexts/ChatContext";
 import { Stack } from "expo-router";
 import { AuthProvider } from "../contexts/AuthContext";
 
 export default function RootLayout() {
     return (
+        <ChatProvider>
         <AuthProvider>
             <Stack
                 screenOptions={{
@@ -13,6 +15,6 @@ export default function RootLayout() {
                 <Stack.Screen name="(auth)" />
                 <Stack.Screen name="main" />
             </Stack>
-        </AuthProvider>
+        </AuthProvider></ChatProvider>
     )
 }
